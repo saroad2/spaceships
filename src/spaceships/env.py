@@ -5,7 +5,7 @@ import numpy as np
 import pygame
 from gym.core import RenderFrame
 
-from spaceships.colors import BLACK, BLUE, GREEN, WHITE, YELLOW
+from spaceships.colors import BLACK, BLUE, GREEN, RED, WHITE, YELLOW
 from spaceships.direction import Direction
 
 
@@ -17,10 +17,12 @@ class SpaceshipsEnv(gym.Env):
     def __init__(
         self,
         size: int,
-        turn_chance: float = 0.2,
+        enemy_move_chance: float = 0.33,
+        turn_chance: float = 0,
         screen: Optional[pygame.Surface] = None,
     ):
         self.size = size
+        self.enemy_move_chance = enemy_move_chance
         self.turn_chance = turn_chance
         self.screen = screen
         self.font = (
@@ -31,6 +33,7 @@ class SpaceshipsEnv(gym.Env):
         )
         self.action_space = gym.spaces.Discrete(4)
         self.player_location = self.random_location()
+        self.enemy_location = self.random_location()
         self.star_location = self.random_location()
         self.moves = 0
         self.score = 0
@@ -39,21 +42,32 @@ class SpaceshipsEnv(gym.Env):
 
     @property
     def state_shape(self):
-        return self.size, self.size, 2
+        return self.size, self.size, 3
 
     @property
     def state(self):
         state = np.zeros(shape=self.state_shape)
-        if not self.lost():
-            px, py = self.player_location
-            state[px, py, 0] = 1
+        if self.lost():
+            return state
+        px, py = self.player_location
+        state[px, py, 0] = 1
         sx, sy = self.star_location
         state[sx, sy, 1] = 1
+        ex, ey = self.enemy_location
+        state[ex, ey, 2] = 1
         return state
+
+    @property
+    def max_distance(self):
+        return np.sqrt(2) * self.size
 
     @property
     def distance_to_star(self):
         return np.linalg.norm(self.player_location - self.star_location)
+
+    @property
+    def distance_to_enemy(self):
+        return np.linalg.norm(self.player_location - self.enemy_location)
 
     @property
     def screen_width(self):
@@ -70,6 +84,8 @@ class SpaceshipsEnv(gym.Env):
             return True
         if self.player_location[1] < 0 or self.player_location[1] >= self.size:
             return True
+        if np.array_equal(self.player_location, self.enemy_location):
+            return True
         return False
 
     def reset(
@@ -80,6 +96,7 @@ class SpaceshipsEnv(gym.Env):
         options: Optional[dict] = None,
     ) -> Union[np.ndarray, Tuple[np.ndarray, dict]]:
         self.player_location = self.random_location()
+        self.enemy_location = self.random_location()
         self.star_location = self.random_location()
         self.moves = 0
         self.score = 0
@@ -89,12 +106,8 @@ class SpaceshipsEnv(gym.Env):
 
     def step(self, action: Direction) -> Tuple[np.ndarray, float, bool, dict]:
         self.moves += 1
-        turn_index = np.random.choice(
-            [-1, 0, 1],
-            p=[self.turn_chance / 2, 1 - self.turn_chance, self.turn_chance / 2],
-        )
-        direction_index = np.mod(action.value + turn_index, len(Direction))
-        self.player_location += Direction(direction_index).to_vector()
+        self.move_player(action)
+        self.move_enemy()
         lost = self.lost()
         if lost:
             reward = -self.lost_penalty
@@ -103,18 +116,49 @@ class SpaceshipsEnv(gym.Env):
             reward = self.star_reward
             self.star_location = self.random_location()
         else:
-            reward = self.move_reward / self.distance_to_star
+            reward = (
+                self.move_reward
+                * (
+                    1 / self.distance_to_star
+                    + self.distance_to_enemy / self.max_distance
+                )
+                / 2
+            )
         self.score += reward
-        self.slided = turn_index != 0
         return self.state, reward, lost, {}
+
+    def move_player(self, action):
+        turn_index = np.random.choice(
+            [-1, 0, 1],
+            p=[self.turn_chance / 2, 1 - self.turn_chance, self.turn_chance / 2],
+        )
+        direction_index = np.mod(action.value + turn_index, len(Direction))
+        self.player_location += Direction(direction_index).to_vector()
+        self.slided = turn_index != 0
+
+    def move_enemy(self):
+        if np.array_equal(self.player_location, self.enemy_location):
+            return
+        if np.random.uniform() > self.enemy_move_chance:
+            return
+        move_vector = self.player_location - self.enemy_location
+        left_right_vector = Direction.RIGHT if move_vector[0] > 0 else Direction.LEFT
+        up_down_vector = Direction.DOWN if move_vector[1] > 0 else Direction.UP
+        direction_vector = (
+            left_right_vector
+            if np.abs(move_vector[0]) > np.abs(move_vector[1])
+            else up_down_vector
+        )
+        self.enemy_location += direction_vector.to_vector()
 
     def render(self, mode="human") -> Optional[Union[RenderFrame, List[RenderFrame]]]:
         if self.screen is None:
             return None
         self.screen.fill(WHITE)
         player_color = GREEN if self.slided else BLUE
-        self.draw_block(location=self.player_location, color=player_color)
         self.draw_block(location=self.star_location, color=YELLOW)
+        self.draw_block(location=self.player_location, color=player_color)
+        self.draw_block(location=self.enemy_location, color=RED)
         img = self.font.render(f"Score: {self.score:.2f}", False, BLACK)
         rect = img.get_rect()
         rect.midtop = (self.screen_width // 2, 0)
