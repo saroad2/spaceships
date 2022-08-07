@@ -31,8 +31,12 @@ class SpaceshipsEnv(gym.Env):
         self.star_hits = 0
 
     @property
+    def state_shape(self):
+        return self.size, self.size, 2
+
+    @property
     def state(self):
-        state = np.zeros(shape=(self.size, self.size, 2))
+        state = np.zeros(shape=self.state_shape)
         if not self.lost():
             px, py = self.player_location
             state[px, py, 0] = 1
@@ -75,11 +79,7 @@ class SpaceshipsEnv(gym.Env):
         self.star_hits = 0
         return self.state
 
-    def step(
-        self, action: Direction
-    ) -> Union[
-        Tuple[np.ndarray, float, bool, bool, dict], Tuple[np.ndarray, float, bool, dict]
-    ]:
+    def step(self, action: Direction) -> Tuple[np.ndarray, float, bool, dict]:
         self.moves += 1
         self.player_location += action.to_vector()
         lost = self.lost()
