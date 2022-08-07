@@ -5,7 +5,7 @@ import numpy as np
 import pygame
 from gym.core import RenderFrame
 
-from spaceships.colors import BLACK, BLUE, WHITE, YELLOW
+from spaceships.colors import BLACK, BLUE, GREEN, WHITE, YELLOW
 from spaceships.direction import Direction
 
 
@@ -14,8 +14,14 @@ class SpaceshipsEnv(gym.Env):
     move_reward = 1
     lost_penalty = 2
 
-    def __init__(self, size: int, screen: Optional[pygame.Surface] = None):
+    def __init__(
+        self,
+        size: int,
+        turn_chance: float = 0.2,
+        screen: Optional[pygame.Surface] = None,
+    ):
         self.size = size
+        self.turn_chance = turn_chance
         self.screen = screen
         self.font = (
             pygame.font.SysFont("ariel", 24) if self.screen is not None else None
@@ -29,6 +35,7 @@ class SpaceshipsEnv(gym.Env):
         self.moves = 0
         self.score = 0
         self.star_hits = 0
+        self.slided = False
 
     @property
     def state_shape(self):
@@ -77,11 +84,17 @@ class SpaceshipsEnv(gym.Env):
         self.moves = 0
         self.score = 0
         self.star_hits = 0
+        self.slided = False
         return self.state
 
     def step(self, action: Direction) -> Tuple[np.ndarray, float, bool, dict]:
         self.moves += 1
-        self.player_location += action.to_vector()
+        turn_index = np.random.choice(
+            [-1, 0, 1],
+            p=[self.turn_chance / 2, 1 - self.turn_chance, self.turn_chance / 2],
+        )
+        direction_index = np.mod(action.value + turn_index, len(Direction))
+        self.player_location += Direction(direction_index).to_vector()
         lost = self.lost()
         if lost:
             reward = -self.lost_penalty
@@ -92,13 +105,15 @@ class SpaceshipsEnv(gym.Env):
         else:
             reward = self.move_reward / self.distance_to_star
         self.score += reward
+        self.slided = turn_index != 0
         return self.state, reward, lost, {}
 
     def render(self, mode="human") -> Optional[Union[RenderFrame, List[RenderFrame]]]:
         if self.screen is None:
             return None
         self.screen.fill(WHITE)
-        self.draw_block(location=self.player_location, color=BLUE)
+        player_color = GREEN if self.slided else BLUE
+        self.draw_block(location=self.player_location, color=player_color)
         self.draw_block(location=self.star_location, color=YELLOW)
         img = self.font.render(f"Score: {self.score:.2f}", False, BLACK)
         rect = img.get_rect()
